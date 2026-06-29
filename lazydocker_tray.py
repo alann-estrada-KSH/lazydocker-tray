@@ -10,16 +10,22 @@ Deps: PySide6  (pip install PySide6). Needs `docker` and `lazydocker` on PATH.
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
 import threading
+import urllib.request
+import webbrowser
 
 from PySide6.QtCore import QObject, QTimer, Signal, Qt, QLocale
 from PySide6.QtGui import (
     QAction, QIcon, QPainter, QPixmap, QColor, QBrush, QPen, QCursor,
 )
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+
+__version__ = "0.1.0"
+REPO = "alannnn-estrada/lazydocker-tray"  # owner/name for the update check
 
 # ---------- i18n (lazy: dict, no gettext). Override with TRAY_LANG=es|en ----------
 
@@ -38,6 +44,9 @@ STRINGS = {
         "unhealthy": "Unhealthy",
         "checking": "Docker: checking…",
         "no_docker": "docker not found in PATH",
+        "check_updates": "Check for updates",
+        "update_available": "Update available: v{v}",
+        "up_to_date": "You are on the latest version (v{v})",
     },
     "es": {
         "open_lazydocker": "Abrir LazyDocker",
@@ -53,6 +62,9 @@ STRINGS = {
         "unhealthy": "No sanos",
         "checking": "Docker: comprobando…",
         "no_docker": "docker no encontrado en PATH",
+        "check_updates": "Buscar actualizaciones",
+        "update_available": "Actualización disponible: v{v}",
+        "up_to_date": "Estás en la última versión (v{v})",
     },
 }
 
@@ -154,6 +166,28 @@ def poll_stats():
     return {"cpu": cpu, "mem_bytes": mem}
 
 
+# ---------- update check (stdlib only, no auto-install) ----------
+
+RELEASES_URL = f"https://github.com/{REPO}/releases/latest"
+
+
+def _ver_tuple(s):
+    return tuple(int(x) for x in re.findall(r"\d+", s or ""))
+
+
+def latest_version():
+    """Latest release tag from GitHub, without leading 'v'. '' on any failure."""
+    url = f"https://api.github.com/repos/{REPO}/releases/latest"
+    req = urllib.request.Request(
+        url, headers={"Accept": "application/vnd.github+json", "User-Agent": "lazydocker-tray"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:
+            return (json.load(r).get("tag_name") or "").lstrip("v")
+    except Exception:
+        return ""
+
+
 # ---------- icon: docker logo + colored badge ----------
 
 COLORS = {"up": "#2ecc71", "warn": "#f1c40f", "down": "#e74c3c"}
@@ -195,12 +229,16 @@ def make_icon(base_pm, color_hex, size=64):
 class Poller(QObject):
     stateReady = Signal(dict)
     statsReady = Signal(dict)
+    updateReady = Signal(str)  # latest version string ('' if check failed)
 
     def fetch_state(self):
         threading.Thread(target=lambda: self.stateReady.emit(poll_state()), daemon=True).start()
 
     def fetch_stats(self):
         threading.Thread(target=lambda: self.statsReady.emit(poll_stats()), daemon=True).start()
+
+    def fetch_update(self):
+        threading.Thread(target=lambda: self.updateReady.emit(latest_version()), daemon=True).start()
 
 
 # ---------- app ----------
@@ -266,6 +304,7 @@ def build():
 
     add(menu, T["prune"], lambda: run_in_terminal("docker system prune"))
     menu.addSeparator()
+    add(menu, T["check_updates"], lambda: webbrowser.open(RELEASES_URL))
     add(menu, T["quit"], app.quit)
 
     tray.setContextMenu(menu)
@@ -308,13 +347,19 @@ def build():
             cur.update(st)
             render()
 
+    def on_update(latest):
+        if latest and _ver_tuple(latest) > _ver_tuple(__version__):
+            tray.showMessage("lazydocker-tray", T["update_available"].format(v=latest))
+
     poller = Poller()
     poller.stateReady.connect(on_state)
     poller.statsReady.connect(on_stats)
+    poller.updateReady.connect(on_update)
 
     t_state = QTimer(); t_state.timeout.connect(poller.fetch_state); t_state.start(STATE_SECONDS * 1000)
     t_stats = QTimer(); t_stats.timeout.connect(poller.fetch_stats); t_stats.start(STATS_SECONDS * 1000)
     poller.fetch_state(); poller.fetch_stats()  # immediate first poll
+    poller.fetch_update()  # one-shot update check on startup
 
     tray.show()
     return app, tray, poller, t_state, t_stats  # keep refs alive

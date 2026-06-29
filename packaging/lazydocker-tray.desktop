@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=LazyDocker Tray
+Comment=Docker system tray indicator with lazydocker integration
+Exec=lazydocker-tray
+Icon=docker
+Terminal=false
+Categories=Development;System;Utility;
+Keywords=docker;lazydocker;containers;tray;

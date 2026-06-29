@@ -1,0 +1,143 @@
+name: release
+
+# Tag a version to cut a release:  git tag v0.1.0 && git push --tags
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create the GitHub Release
+  pages: write      # deploy the apt/dnf repo to GitHub Pages
+  id-token: write   # required by deploy-pages
+
+env:
+  APP: lazydocker-tray
+
+jobs:
+  # ---------------- Linux: .deb + .rpm ----------------
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt pyinstaller
+      - run: pyinstaller --onefile --windowed --name "$APP" lazydocker_tray.py
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby ruby-dev build-essential rpm
+          sudo gem install --no-document fpm
+      - name: Build .deb and .rpm
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"; [ "$VERSION" = "$GITHUB_REF_NAME" ] && VERSION="0.0.0"
+          for t in deb rpm; do
+            fpm -s dir -t $t -n "$APP" -v "$VERSION" \
+              --description "Docker system tray indicator with lazydocker integration" \
+              --url "https://github.com/${{ github.repository }}" \
+              --license MIT --maintainer "Alan Estrada" \
+              dist/$APP=/usr/bin/$APP \
+              packaging/$APP.desktop=/usr/share/applications/$APP.desktop
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            *.deb
+            *.rpm
+
+  # ---------------- Windows: installer .exe ----------------
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt pyinstaller
+      - run: pyinstaller --onefile --windowed --name lazydocker-tray lazydocker_tray.py
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $v = "${env:GITHUB_REF_NAME}" -replace '^v',''
+          if (-not $v) { $v = "0.0.0" }
+          Copy-Item dist\lazydocker-tray.exe packaging\windows\
+          choco install innosetup --no-progress -y
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" packaging\windows\installer.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: packaging/windows/*.exe
+
+  # ---------------- macOS: .app zip ----------------
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt pyinstaller
+      - run: pyinstaller --windowed --name lazydocker-tray lazydocker_tray.py
+      - name: Zip .app
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"; [ "$VERSION" = "$GITHUB_REF_NAME" ] && VERSION="0.0.0"
+          cd dist && zip -ry "../LazyDockerTray-darwin-x64-${VERSION}.zip" lazydocker-tray.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: "*.zip"
+
+  # ---------------- GitHub Release with all assets ----------------
+  release:
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: assets, merge-multiple: true }
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "${{ github.repository }}" \
+            --title "$GITHUB_REF_NAME" --generate-notes \
+            assets/*
+
+  # ---------------- apt / dnf repos on GitHub Pages ----------------
+  pages:
+    needs: build-linux
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: linux-packages, path: pkgs }
+      - name: Install repo tools
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev apt-utils createrepo-c
+      - name: Build apt repo
+        run: |
+          mkdir -p site/apt/pool/main site/apt/dists/stable/main/binary-amd64
+          cp pkgs/*.deb site/apt/pool/main/
+          ( cd site/apt
+            dpkg-scanpackages --multiversion pool/main > dists/stable/main/binary-amd64/Packages
+            gzip -kf dists/stable/main/binary-amd64/Packages
+            apt-ftparchive release dists/stable > dists/stable/Release )
+      - name: Build dnf repo
+        run: |
+          mkdir -p site/rpm
+          cp pkgs/*.rpm site/rpm/
+          createrepo_c site/rpm
+          cat > site/rpm/${APP}.repo <<EOF
+          [${APP}]
+          name=${APP}
+          baseurl=https://${{ github.repository_owner }}.github.io/${APP}/rpm
+          enabled=1
+          gpgcheck=0
+          EOF
+      - name: Landing page
+        run: echo "<h1>${APP}</h1><p>apt &amp; dnf repositories. See the README for setup.</p>" > site/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: site }
+      - id: deploy
+        uses: actions/deploy-pages@v4
