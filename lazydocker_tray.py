@@ -11,6 +11,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -24,7 +25,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 REPO = "alann-estrada-KSH/lazydocker-tray"  # owner/name for the update check
 
 # ---------- i18n (lazy: dict, no gettext). Override with TRAY_LANG=es|en ----------
@@ -47,6 +48,7 @@ STRINGS = {
         "check_updates": "Check for updates",
         "update_available": "Update available: v{v}",
         "up_to_date": "You are on the latest version (v{v})",
+        "autostart": "Start at login",
     },
     "es": {
         "open_lazydocker": "Abrir LazyDocker",
@@ -65,6 +67,7 @@ STRINGS = {
         "check_updates": "Buscar actualizaciones",
         "update_available": "Actualización disponible: v{v}",
         "up_to_date": "Estás en la última versión (v{v})",
+        "autostart": "Iniciar al arrancar",
     },
 }
 
@@ -221,6 +224,87 @@ def latest_version():
         return ""
 
 
+# ---------- autostart (start at login), cross-platform ----------
+
+AUTOSTART_ID = "lazydocker-tray"
+_WIN_RUN_KEY = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
+_WIN_RUN_NAME = "LazyDockerTray"
+
+
+def _app_command():
+    """Command that launches this app: the frozen binary, or python + this script."""
+    if getattr(sys, "frozen", False):
+        return sys.executable
+    return f"{shlex.quote(sys.executable)} {shlex.quote(os.path.abspath(__file__))}"
+
+
+def _linux_autostart_file():
+    return os.path.expanduser(f"~/.config/autostart/{AUTOSTART_ID}.desktop")
+
+
+def _macos_plist():
+    return os.path.expanduser(f"~/Library/LaunchAgents/com.{AUTOSTART_ID}.plist")
+
+
+def autostart_enabled():
+    s = platform.system()
+    if s == "Windows":
+        rc, out = _run(["reg", "query", _WIN_RUN_KEY, "/v", _WIN_RUN_NAME])
+        return rc == 0 and _WIN_RUN_NAME in out
+    if s == "Darwin":
+        return os.path.exists(_macos_plist())
+    return os.path.exists(_linux_autostart_file())
+
+
+def set_autostart(enabled):
+    """Create or remove the OS autostart entry. Raises on failure."""
+    s = platform.system()
+    if s == "Windows":
+        if enabled:
+            _run(["reg", "add", _WIN_RUN_KEY, "/v", _WIN_RUN_NAME,
+                  "/t", "REG_SZ", "/d", _app_command(), "/f"], check=True)
+        else:
+            _run(["reg", "delete", _WIN_RUN_KEY, "/v", _WIN_RUN_NAME, "/f"])
+        return
+    if s == "Darwin":
+        path = _macos_plist()
+        if enabled:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<plist version="1.0"><dict>\n'
+                    f'<key>Label</key><string>com.{AUTOSTART_ID}</string>\n'
+                    '<key>ProgramArguments</key><array>'
+                    f'<string>{sys.executable}</string></array>\n'
+                    '<key>RunAtLoad</key><true/>\n'
+                    '</dict></plist>\n'
+                )
+            _run(["launchctl", "load", "-w", path])
+        elif os.path.exists(path):
+            _run(["launchctl", "unload", "-w", path])
+            os.remove(path)
+        return
+    # Linux: freedesktop autostart .desktop
+    path = _linux_autostart_file()
+    if enabled:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(
+                "[Desktop Entry]\nType=Application\nName=LazyDocker Tray\n"
+                f"Exec={_app_command()}\nTerminal=false\nX-GNOME-Autostart-enabled=true\n"
+            )
+    elif os.path.exists(path):
+        os.remove(path)
+
+
+def _run(argv, check=False):
+    p = subprocess.run(argv, capture_output=True, text=True, creationflags=NO_WINDOW)
+    if check and p.returncode != 0:
+        raise RuntimeError(p.stderr.strip() or f"command failed: {argv[0]}")
+    return p.returncode, p.stdout
+
+
 # ---------- icon: docker logo + colored badge ----------
 
 COLORS = {"up": "#2ecc71", "warn": "#f1c40f", "down": "#e74c3c"}
@@ -347,6 +431,20 @@ def build():
 
     add(menu, T["prune"], lambda: run_in_terminal("docker system prune"))
     menu.addSeparator()
+
+    autostart_act = QAction(T["autostart"], menu)
+    autostart_act.setCheckable(True)
+    autostart_act.setChecked(autostart_enabled())
+
+    def toggle_autostart(on):
+        try:
+            set_autostart(on)
+        except Exception as e:
+            tray.showMessage("lazydocker-tray", str(e))
+            autostart_act.setChecked(autostart_enabled())  # revert to real state
+    autostart_act.toggled.connect(toggle_autostart)
+    menu.addAction(autostart_act)
+
     add(menu, T["check_updates"], lambda: webbrowser.open(RELEASES_URL))
     add(menu, T["quit"], app.quit)
 

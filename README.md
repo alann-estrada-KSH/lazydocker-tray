@@ -5,7 +5,7 @@ A lightweight cross-platform **system tray** indicator for Docker, with one-clic
 
 - 🟢 / 🟡 / 🔴 colored badge on the Docker logo — engine up & healthy / unhealthy or empty / down
 - Tooltip with container counts and aggregate CPU / RAM
-- Right-click menu: open lazydocker, auto-detected Compose projects (up / down / logs in the right dir), `docker system prune`
+- Right-click menu: open lazydocker, auto-detected Compose projects (up / down / logs in the right dir), `docker system prune`, **start-at-login** toggle
 - Light on resources: cheap state poll every 6s, expensive `docker stats` only every 30s, all off the GUI thread
 - i18n: English / Spanish, auto-detected from your locale
 
