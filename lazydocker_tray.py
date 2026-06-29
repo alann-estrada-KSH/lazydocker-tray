@@ -24,7 +24,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 REPO = "alann-estrada-KSH/lazydocker-tray"  # owner/name for the update check
 
 # ---------- i18n (lazy: dict, no gettext). Override with TRAY_LANG=es|en ----------
@@ -79,18 +79,45 @@ COMPOSE_DIR = ""
 
 NO_WINDOW = 0x08000000 if platform.system() == "Windows" else 0  # hide console on Windows
 
+# Apps launched from a .desktop entry inherit a minimal PATH that usually omits
+# ~/.local/bin (where lazydocker often lives). Augment it so both detection and
+# the terminal we spawn can find these tools — the dev terminal had them, the
+# GUI session does not.
+_EXTRA_BIN = [
+    os.path.expanduser("~/.local/bin"),
+    "/usr/local/bin", "/snap/bin", "/opt/homebrew/bin",
+    os.path.expanduser("~/go/bin"), "/usr/bin", "/bin",
+]
+
+
+def augmented_env():
+    env = dict(os.environ)
+    parts = [p for p in env.get("PATH", "").split(os.pathsep) if p]
+    seen, merged = set(), []
+    for p in [*_EXTRA_BIN, *parts]:
+        if p not in seen:
+            seen.add(p)
+            merged.append(p)
+    env["PATH"] = os.pathsep.join(merged)
+    return env
+
+
+def which(cmd):
+    return shutil.which(cmd, path=augmented_env()["PATH"])
+
 
 # ---------- terminal launching (cross-platform) ----------
 
 def run_in_terminal(command, cwd=None):
     cwd = cwd or COMPOSE_DIR or None
+    env = augmented_env()
     system = platform.system()
     if system == "Darwin":
         script = f'tell app "Terminal" to do script "{command}"'
-        subprocess.Popen(["osascript", "-e", script], cwd=cwd)
+        subprocess.Popen(["osascript", "-e", script], cwd=cwd, env=env)
         return
     if system == "Windows":
-        subprocess.Popen(["cmd", "/c", "start", "cmd", "/k", command], cwd=cwd, shell=True)
+        subprocess.Popen(["cmd", "/c", "start", "cmd", "/k", command], cwd=cwd, shell=True, env=env)
         return
     terminals = [
         ("konsole", ["konsole", "-e", "bash", "-c", f"{command}; exec bash"]),
@@ -100,8 +127,8 @@ def run_in_terminal(command, cwd=None):
         ("xterm", ["xterm", "-e", f"bash -c '{command}; exec bash'"]),
     ]
     for name, argv in terminals:
-        if shutil.which(name):
-            subprocess.Popen(argv, cwd=cwd)
+        if which(name):
+            subprocess.Popen(argv, cwd=cwd, env=env)
             return
     raise RuntimeError("No supported terminal emulator found")
 
@@ -251,7 +278,7 @@ def build():
     icons = {k: make_icon(base_pm, c) for k, c in COLORS.items()}
     tray = QSystemTrayIcon(icons["down"])
 
-    has = lambda cmd: shutil.which(cmd) is not None
+    has = lambda cmd: which(cmd) is not None
 
     menu = QMenu()
 
