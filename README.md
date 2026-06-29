@@ -25,12 +25,12 @@ The packaged builds bundle Python + Qt, so end users do **not** need Python inst
 
 ### Windows
 
-Download `LazyDockerTray-Setup-x.x.x.exe` from [Releases](https://github.com/alannnn-estrada/lazydocker-tray/releases/latest) and run the installer.
+Download `LazyDockerTray-Setup-x.x.x.exe` from [Releases](https://github.com/alann-estrada-KSH/lazydocker-tray/releases/latest) and run the installer.
 Optionally tick "start at login". The app checks for a newer release on startup and notifies you with a link.
 
 ### macOS
 
-Download `LazyDockerTray-darwin-x64-x.x.x.zip` from [Releases](https://github.com/alannnn-estrada/lazydocker-tray/releases/latest), unzip, and move `lazydocker-tray.app` to `/Applications`.
+Download `LazyDockerTray-darwin-x64-x.x.x.zip` from [Releases](https://github.com/alann-estrada-KSH/lazydocker-tray/releases/latest), unzip, and move `lazydocker-tray.app` to `/Applications`.
 
 > Not notarized. On first launch, right-click → Open to bypass Gatekeeper.
 
@@ -41,7 +41,7 @@ Adds a repository so `apt` / `dnf` keep the app updated automatically.
 **Debian / Ubuntu**
 
 ```bash
-echo "deb [trusted=yes] https://alannnn-estrada.github.io/lazydocker-tray/apt stable main" \
+echo "deb [trusted=yes] https://alann-estrada-ksh.github.io/lazydocker-tray/apt stable main" \
   | sudo tee /etc/apt/sources.list.d/lazydocker-tray.list
 sudo apt update
 sudo apt install lazydocker-tray
@@ -51,7 +51,7 @@ sudo apt install lazydocker-tray
 
 ```bash
 sudo curl -o /etc/yum.repos.d/lazydocker-tray.repo \
-  https://alannnn-estrada.github.io/lazydocker-tray/rpm/lazydocker-tray.repo
+  https://alann-estrada-ksh.github.io/lazydocker-tray/rpm/lazydocker-tray.repo
 sudo dnf install lazydocker-tray
 ```
 
@@ -66,7 +66,7 @@ sudo dnf upgrade lazydocker-tray
 
 ### Linux — manual download
 
-Download the `.deb` or `.rpm` from [Releases](https://github.com/alannnn-estrada/lazydocker-tray/releases/latest):
+Download the `.deb` or `.rpm` from [Releases](https://github.com/alann-estrada-KSH/lazydocker-tray/releases/latest):
 
 ```bash
 # Debian / Ubuntu

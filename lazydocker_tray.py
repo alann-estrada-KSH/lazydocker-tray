@@ -24,8 +24,8 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-__version__ = "0.1.0"
-REPO = "alannnn-estrada/lazydocker-tray"  # owner/name for the update check
+__version__ = "0.1.1"
+REPO = "alann-estrada-KSH/lazydocker-tray"  # owner/name for the update check
 
 # ---------- i18n (lazy: dict, no gettext). Override with TRAY_LANG=es|en ----------
 

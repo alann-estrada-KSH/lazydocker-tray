@@ -134,10 +134,11 @@ jobs:
           mkdir -p site/rpm
           cp pkgs/*.rpm site/rpm/
           createrepo_c site/rpm
+          OWNER="${{ github.repository_owner }}"; OWNER="${OWNER,,}"
           cat > site/rpm/${APP}.repo <<EOF
           [${APP}]
           name=${APP}
-          baseurl=https://${{ github.repository_owner }}.github.io/${APP}/rpm
+          baseurl=https://${OWNER}.github.io/${APP}/rpm
           enabled=1
           gpgcheck=0
           EOF
