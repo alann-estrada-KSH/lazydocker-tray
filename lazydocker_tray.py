@@ -24,7 +24,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 REPO = "alann-estrada-KSH/lazydocker-tray"  # owner/name for the update check
 
 # ---------- i18n (lazy: dict, no gettext). Override with TRAY_LANG=es|en ----------
@@ -173,6 +173,12 @@ def poll_state():
     }
 
 
+def docker_server_version():
+    """Docker engine version string, '' if unavailable. Cheap one-shot."""
+    rc, out = _docker(["version", "--format", "{{.Server.Version}}"], timeout=6)
+    return out if rc == 0 else ""
+
+
 def poll_stats():
     """Expensive: aggregate CPU%/RAM via `docker stats --no-stream`."""
     rc, out = _docker(
@@ -257,6 +263,7 @@ class Poller(QObject):
     stateReady = Signal(dict)
     statsReady = Signal(dict)
     updateReady = Signal(str)  # latest version string ('' if check failed)
+    versionReady = Signal(str)  # docker engine version
 
     def fetch_state(self):
         threading.Thread(target=lambda: self.stateReady.emit(poll_state()), daemon=True).start()
@@ -266,6 +273,9 @@ class Poller(QObject):
 
     def fetch_update(self):
         threading.Thread(target=lambda: self.updateReady.emit(latest_version()), daemon=True).start()
+
+    def fetch_version(self):
+        threading.Thread(target=lambda: self.versionReady.emit(docker_server_version()), daemon=True).start()
 
 
 # ---------- app ----------
@@ -287,6 +297,12 @@ def build():
         act.triggered.connect(lambda: fn())
         act.setEnabled(enabled)
         target.addAction(act)
+
+    # Non-clickable header showing versions (Docker engine filled in once fetched).
+    version_header = QAction(f"LazyDocker Tray v{__version__}", menu)
+    version_header.setEnabled(False)
+    menu.addAction(version_header)
+    menu.addSeparator()
 
     add(menu, T["open_lazydocker"], lambda: run_in_terminal("lazydocker"), has("lazydocker"))
     menu.addSeparator()
@@ -347,12 +363,18 @@ def build():
 
     # latest values, rendered together into the tooltip
     cur = {"state": "down", "running": 0, "healthy": 0, "unhealthy": 0,
-           "cpu": 0.0, "mem_bytes": 0.0}
+           "cpu": 0.0, "mem_bytes": 0.0, "docker_ver": ""}
+
+    def _footer():
+        f = f"\n\nv{__version__}"
+        if cur["docker_ver"]:
+            f += f" · Docker {cur['docker_ver']}"
+        return f
 
     def render():
         if cur["state"] == "down":
             tray.setIcon(icons["down"])
-            tray.setToolTip(f"{DOT['down']} {T['engine']}\n{T['stopped']}")
+            tray.setToolTip(f"{DOT['down']} {T['engine']}\n{T['stopped']}{_footer()}")
             return
         key = "up" if (cur["unhealthy"] == 0 and cur["running"] > 0) else "warn"
         tray.setIcon(icons[key])
@@ -361,6 +383,7 @@ def build():
             f"{T['containers']}: {cur['running']}\n"
             f"{T['healthy']}: {cur['healthy']}   {T['unhealthy']}: {cur['unhealthy']}\n"
             f"CPU: {cur['cpu']:.0f}%   RAM: {cur['mem_bytes'] / 2**30:.1f} GB"
+            f"{_footer()}"
         )
 
     def on_state(st):
@@ -378,15 +401,23 @@ def build():
         if latest and _ver_tuple(latest) > _ver_tuple(__version__):
             tray.showMessage("lazydocker-tray", T["update_available"].format(v=latest))
 
+    def on_version(ver):
+        cur["docker_ver"] = ver
+        if ver:
+            version_header.setText(f"LazyDocker Tray v{__version__} · Docker {ver}")
+        render()
+
     poller = Poller()
     poller.stateReady.connect(on_state)
     poller.statsReady.connect(on_stats)
     poller.updateReady.connect(on_update)
+    poller.versionReady.connect(on_version)
 
     t_state = QTimer(); t_state.timeout.connect(poller.fetch_state); t_state.start(STATE_SECONDS * 1000)
     t_stats = QTimer(); t_stats.timeout.connect(poller.fetch_stats); t_stats.start(STATS_SECONDS * 1000)
     poller.fetch_state(); poller.fetch_stats()  # immediate first poll
-    poller.fetch_update()  # one-shot update check on startup
+    poller.fetch_update()   # one-shot update check on startup
+    poller.fetch_version()  # one-shot docker engine version
 
     tray.show()
     return app, tray, poller, t_state, t_stats  # keep refs alive
