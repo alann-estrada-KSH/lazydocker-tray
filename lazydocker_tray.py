@@ -25,7 +25,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 REPO = "alann-estrada-KSH/lazydocker-tray"  # owner/name for the update check
 
 # ---------- i18n (lazy: dict, no gettext). Override with TRAY_LANG=es|en ----------
@@ -93,8 +93,25 @@ _EXTRA_BIN = [
 ]
 
 
+# PyInstaller's bootloader injects its bundle dir into these so the frozen app
+# finds its own libs. Children (konsole, docker plugins) must NOT inherit them or
+# they try to load incompatible bundled Qt libs and fail to start. PyInstaller
+# stashes the pre-launch value in "<VAR>_ORIG".
+_PYINSTALLER_LIBVARS = (
+    "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
+    "QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "QML_IMPORT_PATH",
+)
+
+
 def augmented_env():
     env = dict(os.environ)
+    frozen = getattr(sys, "frozen", False)
+    for k in _PYINSTALLER_LIBVARS:
+        orig = env.pop(k + "_ORIG", None)
+        if orig is not None:
+            env[k] = orig       # restore the user's original value
+        elif frozen:
+            env.pop(k, None)    # set only by PyInstaller -> drop it for children
     parts = [p for p in env.get("PATH", "").split(os.pathsep) if p]
     seen, merged = set(), []
     for p in [*_EXTRA_BIN, *parts]:
@@ -142,7 +159,7 @@ def _docker(args, timeout=8):
     try:
         p = subprocess.run(
             ["docker", *args], capture_output=True, text=True,
-            timeout=timeout, creationflags=NO_WINDOW,
+            timeout=timeout, creationflags=NO_WINDOW, env=augmented_env(),
         )
         return p.returncode, p.stdout.strip()
     except Exception:
