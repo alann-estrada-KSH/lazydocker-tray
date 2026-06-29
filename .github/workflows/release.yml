@@ -122,7 +122,13 @@ jobs:
           ( cd site/apt
             dpkg-scanpackages --multiversion pool/main > dists/stable/main/binary-amd64/Packages
             gzip -kf dists/stable/main/binary-amd64/Packages
-            apt-ftparchive release dists/stable > dists/stable/Release )
+            apt-ftparchive \
+              -o APT::FTPArchive::Release::Origin="$APP" \
+              -o APT::FTPArchive::Release::Suite=stable \
+              -o APT::FTPArchive::Release::Codename=stable \
+              -o APT::FTPArchive::Release::Components=main \
+              -o APT::FTPArchive::Release::Architectures=amd64 \
+              release dists/stable > dists/stable/Release )
       - name: Build dnf repo
         run: |
           mkdir -p site/rpm
