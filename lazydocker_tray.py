@@ -25,7 +25,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-__version__ = "0.1.5"
+__version__ = "0.2.0"
 REPO = "alann-estrada-KSH/lazydocker-tray"  # owner/name for the update check
 
 # ---------- i18n (lazy: dict, no gettext). Override with TRAY_LANG=es|en ----------
@@ -49,6 +49,10 @@ STRINGS = {
         "update_available": "Update available: v{v}",
         "up_to_date": "You are on the latest version (v{v})",
         "autostart": "Start at login",
+        "console": "Console",
+        "start_container": "Start container",
+        "stop_container": "Stop container",
+        "no_containers": "(no containers)",
     },
     "es": {
         "open_lazydocker": "Abrir LazyDocker",
@@ -68,6 +72,10 @@ STRINGS = {
         "update_available": "Actualización disponible: v{v}",
         "up_to_date": "Estás en la última versión (v{v})",
         "autostart": "Iniciar al arrancar",
+        "console": "Consola",
+        "start_container": "Iniciar contenedor",
+        "stop_container": "Detener contenedor",
+        "no_containers": "(sin contenedores)",
     },
 }
 
@@ -164,6 +172,50 @@ def _docker(args, timeout=8):
         return p.returncode, p.stdout.strip()
     except Exception:
         return 1, ""
+
+
+def _docker_cwd(args, cwd, timeout=8):
+    try:
+        p = subprocess.run(
+            ["docker", *args], capture_output=True, text=True,
+            timeout=timeout, creationflags=NO_WINDOW, env=augmented_env(),
+            cwd=cwd,
+        )
+        return p.returncode, p.stdout.strip()
+    except Exception:
+        return 1, ""
+
+
+def get_project_containers(wd):
+    """[(name, state)] for containers in a compose project at wd. Fetched on demand."""
+    rc, out = _docker_cwd(["compose", "ps", "--format", "json"], cwd=wd)
+    if rc != 0 or not out:
+        return []
+    containers = []
+    # Newer compose versions output a JSON array; older output one object per line.
+    try:
+        data = json.loads(out)
+        if isinstance(data, list):
+            for c in data:
+                name = c.get("Name") or c.get("Service", "")
+                state = (c.get("State") or c.get("Status", "")).lower()
+                if name:
+                    containers.append((name, state))
+            return containers
+    except ValueError:
+        pass
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+        try:
+            c = json.loads(line)
+            name = c.get("Name") or c.get("Service", "")
+            state = (c.get("State") or c.get("Status", "")).lower()
+            if name:
+                containers.append((name, state))
+        except (ValueError, KeyError):
+            continue
+    return containers
 
 
 def _mem_to_bytes(s):
@@ -428,6 +480,26 @@ def build():
                 result.append((proj["Name"], proj.get("Status", ""), os.path.dirname(cfg)))
         return result
 
+    def _make_lazy_container_menu(parent_menu, label, wd, filter_fn, action_fn):
+        """Attach a submenu that fetches containers on demand and applies filter/action."""
+        sub = parent_menu.addMenu(label)
+
+        def populate(menu=sub, d=wd):
+            menu.clear()
+            containers = get_project_containers(d)
+            filtered = [(n, s) for n, s in containers if filter_fn(s)]
+            if not filtered:
+                a = menu.addAction(T["no_containers"])
+                a.setEnabled(False)
+                return
+            for cname, state in filtered:
+                display = cname if filter_fn("running") and state == "running" else f"{cname} ({state})"
+                a = menu.addAction(display)
+                a.triggered.connect(lambda checked=False, c=cname: run_in_terminal(action_fn(c)))
+
+        sub.aboutToShow.connect(populate)
+        return sub
+
     def refresh_projects():
         projects_menu.clear()
         projects = discover_projects()
@@ -443,6 +515,25 @@ def build():
             add(sub, "up -d", lambda d=wd: run_in_terminal("docker compose up -d", d))
             add(sub, "down", lambda d=wd: run_in_terminal("docker compose down", d))
             add(sub, "logs -f", lambda d=wd: run_in_terminal("docker compose logs -f --tail=100", d))
+            sub.addSeparator()
+            # Console: only running containers; opens interactive shell in a new terminal
+            _make_lazy_container_menu(
+                sub, T["console"], wd,
+                filter_fn=lambda s: s == "running",
+                action_fn=lambda c: f"docker exec -it {c} bash 2>/dev/null || docker exec -it {c} sh",
+            )
+            # Stop: only running containers
+            _make_lazy_container_menu(
+                sub, T["stop_container"], wd,
+                filter_fn=lambda s: s == "running",
+                action_fn=lambda c: f"docker stop {c}",
+            )
+            # Start: containers that are not running
+            _make_lazy_container_menu(
+                sub, T["start_container"], wd,
+                filter_fn=lambda s: s != "running",
+                action_fn=lambda c: f"docker start {c}",
+            )
 
     projects_menu.aboutToShow.connect(refresh_projects)
 
